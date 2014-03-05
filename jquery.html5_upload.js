@@ -40,8 +40,8 @@
                 'FINISHED'  : 'Finished'
             },
             headers: {
-                "Cache-Control":"no-cache",
-                "X-Requested-With":"XMLHttpRequest",
+                "Cache-Control": "no-cache",
+                "X-Requested-With": "XMLHttpRequest",
                 "X-File-Name": function(file){return encodeURIComponent(get_file_name(file))},
                 "X-File-Size": function(file){return get_file_size(file)},
                 "X-CSRF-Token": $('meta[name="csrf-token"]').attr("content"),
@@ -50,7 +50,6 @@
                     return false;
                 }
             },
-
 
             setName: function(text) {},
             setStatus: function(text) {},
@@ -112,7 +111,9 @@
                     options.setProgress(options.genProgress(rpe.loaded, rpe.total));
                 };
                 xhr.onload = function(load) {
-                    if (!/^2\d\d$/.test(xhr.status)) {
+                    var status = parseInt(xhr.status, 10);
+                    // Accept HTTP status codes 200..204 as success
+                    if (status >= 200 && status <= 204) {
                         $this.triggerHandler('html5_upload.onError', [get_file_name(file), load]);
                         if (!options.stopOnFirstError) {
                             upload_file(number+1);
