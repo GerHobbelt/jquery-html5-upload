@@ -1,14 +1,19 @@
+/*globals jQuery, alert, window, FormData, XMLHttpRequest */
 (function ($) {
+    'use strict';
+
     $.fn.html5_upload = function (options) {
+        var available_events = ['onStart', 'onStartOne', 'onProgress', 'onFinishOne', 'onFinish', 'onError'];
 
         function get_file_name(file) {
             return file.name || file.fileName;
         }
+
         function get_file_size(file) {
             return file.size || file.fileSize;
         }
-        var available_events = ['onStart', 'onStartOne', 'onProgress', 'onFinishOne', 'onFinish', 'onError'];
-        var options = $.extend({
+
+        options = $.extend({
             onStart: function (event, total) {
                 return true;
             },
@@ -29,6 +34,7 @@
             fieldName: 'user_file[]',   // ignore if sendBoundary is false
             extraFields: {},            // extra fields to send with file upload request (HTML5 only)
             method: 'post',
+            mimeTypes: false,
 
             STATUSES: {
                 STARTED   : 'Started',
@@ -84,35 +90,59 @@
         function upload( files ) {
             var total = files.length;
             var $this = $(this);
+            var uploaded, xhr; 
+            
             if (!$this.triggerHandler('html5_upload.onStart', [total])) {
                 return false;
             }
+
             this.disabled = true;
-            var uploaded = 0;
-            var xhr = this.html5_upload.xhr;
             this.html5_upload.continue_after_abort = true;
+            
+            uploaded = 0;
+            xhr = this.html5_upload.xhr;
+            
             function upload_file(number) {
                 if (number == total) {
                     $this.triggerHandler('html5_upload.onFinish', [total]);
                     options.setStatus(options.genStatus(1, true));
                     $this.attr('disabled', false);
+
                     if (options.autoclear) {
                         $this.val('');
                     }
                     return;
                 }
+                
                 var file = files[number];
                 if (!$this.triggerHandler('html5_upload.onStartOne', [get_file_name(file), number, total])) {
                     return upload_file(number + 1);
                 }
+
                 options.setStatus(options.genStatus(0));
                 options.setName(options.genName(get_file_name(file), number, total));
                 options.setProgress(options.genProgress(0, get_file_size(file)));
+
+                if (options.mimeTypes && options.mimeTypes.indexOf(file.type) === -1) {
+                    /**
+                     * I don't think it's the right error event.
+                     * It's described as follow:
+                     * onError(event, name, error) (not fully implemented yet)
+                     * Called when XMLHttpRequest has an error.
+                     */
+                    $this.triggerHandler('html5_upload.onError');
+                    if (!options.stopOnFirstError) {
+                        upload_file(number + 1);
+                    }
+                    return;
+                }
+
                 xhr.upload.onprogress = function (rpe) {
                     $this.triggerHandler('html5_upload.onProgress', [rpe.loaded / rpe.total, get_file_name(file), number, total]);
                     options.setStatus(options.genStatus(rpe.loaded / rpe.total));
                     options.setProgress(options.genProgress(rpe.loaded, rpe.total));
                 };
+
                 xhr.onload = function (load) {
                     var status = parseInt(xhr.status, 10);
                     // Accept HTTP status codes 200..204 as success
@@ -121,33 +151,34 @@
                         if (!options.stopOnFirstError) {
                             upload_file(number + 1);
                         }
-                    }
-                    else {
+                    } else {
                         $this.triggerHandler('html5_upload.onFinishOne', [xhr.responseText, get_file_name(file), number, total]);
                         options.setStatus(options.genStatus(1, true));
                         options.setProgress(options.genProgress(get_file_size(file), get_file_size(file)));
                         upload_file(number + 1);
                     }
                 };
+
                 xhr.onabort = function () {
                     if ($this[0].html5_upload.continue_after_abort) {
                         upload_file(number + 1);
-                    }
-                    else {
+                    } else {
                         $this.attr('disabled', false);
                         if (options.autoclear) {
                             $this.val('');
                         }
                     }
                 };
+
                 xhr.onerror = function (e) {
                     $this.triggerHandler('html5_upload.onError', [get_file_name(file), e]);
                     if (!options.stopOnFirstError) {
                         upload_file(number + 1);
                     }
                 };
+
                 xhr.open(options.method, (typeof options.url === 'function' ? options.url(number) : options.url), true);
-                $.each(options.headers,function (key,val){
+                $.each(options.headers,function (key, val) {
                     val = (typeof val === 'function' ? val(file) : val); // resolve value
                     // if resolved value is boolean false, do not send this header
                     if (val === false) { 
@@ -158,18 +189,16 @@
 
                 if (!options.sendBoundary) {
                     xhr.send(file);
-                }
-                else {
+                } else {
                     if (window.FormData) {//Many thanks to scottt.tw
                         var f = new FormData();
                         f.append(typeof options.fieldName === 'function' ? options.fieldName() : options.fieldName, file);
-                        options.extraFields = typeof options.extraFields === 'function' ? options.extraFields() : options.extraFields;
+                        options.extraFields = (typeof options.extraFields === 'function' ? options.extraFields() : options.extraFields);
                         $.each(options.extraFields, function (key, val){
                             f.append(key, val);
                         });
                         xhr.send(f);
-                    }
-                    else if (file.getAsBinary) {//Thanks to jm.schelcher
+                    } else if (file.getAsBinary) { //Thanks to jm.schelcher
                         var boundary = '------multipartformboundary' + (new Date).getTime();
                         var dashdash = '--';
                         var crlf     = '\r\n';
@@ -184,7 +213,11 @@
                         builder += 'Content-Disposition: form-data; name="' + (typeof options.fieldName === 'function' ? options.fieldName() : options.fieldName) + '"';
 
                         //thanks to oyejo...@gmail.com for this fix
-                        fileName = unescape(encodeURIComponent(get_file_name(file))); //encode_utf8
+                        /**
+                         * unescape is deprecated. Replaced with decodeURI
+                         * (http://developer.mozilla.org/en/JavaScript/Reference/Deprecated_and_obsolete_features)
+                         */
+                        fileName = decodeURI(encodeURIComponent(get_file_name(file))); // encode_utf8
 
                         builder += '; filename="' + fileName + '"';
                         builder += crlf;
@@ -205,8 +238,7 @@
 
                         xhr.setRequestHeader('content-type', 'multipart/form-data; boundary=' + boundary);
                         xhr.sendAsBinary(builder);
-                    }
-                    else {
+                    } else {
                         options.onBrowserIncompatible();
                     }
                 }
@@ -223,34 +255,36 @@
                     continue_after_abort: true
                 };
                 if (options.autostart) {
-                    $(this).bind('change', function (e){
+                    $(this).on('change', function (e) {
                         upload.call( e.target, this.files );
                     });
                 }
                 for (var event in available_events) {
-                    if (options[available_events[event]]) {
-                        $(this).bind('html5_upload.' + available_events[event], options[available_events[event]]);
+                    if (available_events.hasOwnProperty(event)) {
+                        if (options[available_events[event]]) {
+                            $(this).on('html5_upload.' + available_events[event], options[available_events[event]]);
+                        }
                     }
                 }
                 $(this)
-                    .bind('html5_upload.startFromDrop', function ( e, dropEvent ){
-                        if ( dropEvent.dataTransfer && dropEvent.dataTransfer.files.length ){
-                            upload.call( file_input, dropEvent.dataTransfer.files );    
+                    .on('html5_upload.startFromDrop', function (e, dropEvent) {
+                        if (dropEvent.dataTransfer && dropEvent.dataTransfer.files.length) {
+                            upload.call(file_input, dropEvent.dataTransfer.files);    
                         }
                     })
-                    .bind('html5_upload.start', upload)
-                    .bind('html5_upload.cancelOne', function () {
+                .on('html5_upload.start', upload)
+                .on('html5_upload.cancelOne', function () {
                         this.html5_upload.xhr.abort();
                     })
-                    .bind('html5_upload.cancelAll', function () {
+                .on('html5_upload.cancelAll', function () {
                         this.html5_upload.continue_after_abort = false;
                         this.html5_upload.xhr.abort();
                     })
-                    .bind('html5_upload.destroy', function () {
+                .on('html5_upload.destroy', function () {
                         this.html5_upload.continue_after_abort = false;
                         this.xhr.abort();
                         delete this.html5_upload;
-                        $(this).unbind('html5_upload.*').unbind('change', upload);
+                    $(this).off('html5_upload.*').off('change', upload);
                     });
             });
         }
@@ -259,4 +293,5 @@
             return false;
         }
     };
-})(jQuery);
+}(jQuery));
+
