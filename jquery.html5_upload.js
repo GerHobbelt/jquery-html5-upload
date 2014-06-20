@@ -3,7 +3,7 @@
     'use strict';
 
     $.fn.html5_upload = function (options) {
-        var available_events = ['onStart', 'onStartOne', 'onProgress', 'onFinishOne', 'onFinish', 'onError'];
+        var available_events = ['onStart', 'onStartOne', 'onProgress', 'onFinishOne', 'onFinish', 'onError', 'onAbort'];
 
         function get_file_name(file) {
             return file.name || file.fileName;
@@ -24,6 +24,7 @@
             onFinishOne: function (event, response, name, number, total) {},
             onFinish: function (event, total) {},
             onError: function (event, name, error) {},
+            onAbort: function (event, name, info) {},
             onBrowserIncompatible: function () {
                 alert('Sorry, but your browser is incompatible with uploading files using HTML5 (at least, with current preferences.\n Please install the latest version of Firefox, Safari or Chrome');
             },
@@ -40,7 +41,9 @@
                 STARTED   : 'Started',
                 PROGRESS  : 'Progress',
                 LOADED    : 'Loaded',
-                FINISHED  : 'Finished'
+                FINISHED  : 'Finished',
+                ABORTED   : 'Aborted',
+                FAILED    : 'Failed'
             },
 
             headers: {
@@ -66,26 +69,35 @@
             setProgress: function (value) {},
 
             genName: function (file, number, total) {
-                return file + '(' + (number + 1) + ' of ' + total + ')';
+                return this.get_file_name(file) + ' [' + Math.ceil(this.get_file_size(file) / 1E3) + 'Kb] (' + (number + 1) + ' of ' + total + ')';
             },
             genStatus: function (progress, finished) {
                 if (finished) {
-                    return options.STATUSES.FINISHED;
+                    if (progress === 1) {
+                        return options.STATUSES.FINISHED;
+                    } else if (progress === -1) {
+                        return options.STATUSES.ABORTED;
+                    } else {
+                        return options.STATUSES.FAILED;
+                    }
                 }
                 if (progress === 0) {
                     return options.STATUSES.STARTED;
-                }
-                else if (progress === 1) {
+                } else if (progress === 1) {
                     return options.STATUSES.LOADED;
-                }
-                else {
+                } else {
                     return options.STATUSES.PROGRESS;
                 }
             },
             genProgress: function (loaded, total) {
                 return loaded / total;
             }
-        }, options);
+        }, options, {
+            // a bit nasty, but add these two cross-platform API functions to the resulting options object, 
+            // which is passed as `this` to options.url() and others
+            get_file_name: get_file_name,
+            get_file_size: get_file_size
+        });
 
         function upload( files ) {
             var total = files.length;
@@ -103,9 +115,8 @@
             xhr = this.html5_upload.xhr;
             
             function upload_file(number) {
-                if (number == total) {
+                if (number === total) {
                     $this.triggerHandler('html5_upload.onFinish', [total]);
-                    options.setStatus(options.genStatus(1, true));
                     $this.attr('disabled', false);
 
                     if (options.autoclear) {
@@ -116,21 +127,22 @@
                 
                 var file = files[number];
                 if (!$this.triggerHandler('html5_upload.onStartOne', [get_file_name(file), number, total])) {
+                    // user code decided to skip this one, which to us equals 'aborted single transfer':
+                    options.setStatus(options.genStatus(-1, true));
                     return upload_file(number + 1);
                 }
 
                 options.setStatus(options.genStatus(0));
-                options.setName(options.genName(get_file_name(file), number, total));
+                options.setName(options.genName(file, number, total));
                 options.setProgress(options.genProgress(0, get_file_size(file)));
 
                 if (options.mimeTypes && options.mimeTypes.indexOf(file.type) === -1) {
-                    /**
-                     * I don't think it's the right error event.
-                     * It's described as follow:
-                     * onError(event, name, error) (not fully implemented yet)
-                     * Called when XMLHttpRequest has an error.
-                     */
-                    $this.triggerHandler('html5_upload.onError');
+                    $this.triggerHandler('html5_upload.onAbort', [get_file_name(file), {
+                        message: "File type not accepted.",
+                        mimetype: file.type,
+                        file: file 
+                    }]);
+                    options.setStatus(options.genStatus(-1, true));
                     if (!options.stopOnFirstError) {
                         upload_file(number + 1);
                     }
@@ -146,8 +158,9 @@
                 xhr.onload = function (load) {
                     var status = parseInt(xhr.status, 10);
                     // Accept HTTP status codes 200..204 as success
-                    if (status >= 200 && status <= 204) {
+                    if (status < 200 || status > 204) {
                         $this.triggerHandler('html5_upload.onError', [get_file_name(file), load]);
+                        options.setStatus(options.genStatus(0, true));
                         if (!options.stopOnFirstError) {
                             upload_file(number + 1);
                         }
@@ -160,6 +173,11 @@
                 };
 
                 xhr.onabort = function () {
+                    $this.triggerHandler('html5_upload.onAbort', [get_file_name(file), {
+                        message: 'Transfer aborted',
+                        file: file
+                    }]);
+                    options.setStatus(options.genStatus(-1, true));
                     if ($this[0].html5_upload.continue_after_abort) {
                         upload_file(number + 1);
                     } else {
@@ -172,12 +190,13 @@
 
                 xhr.onerror = function (e) {
                     $this.triggerHandler('html5_upload.onError', [get_file_name(file), e]);
+                    options.setStatus(options.genStatus(0, true));
                     if (!options.stopOnFirstError) {
                         upload_file(number + 1);
                     }
                 };
 
-                xhr.open(options.method, (typeof options.url === 'function' ? options.url(number) : options.url), true);
+                xhr.open(options.method, (typeof options.url === 'function' ? options.url(number, file, files) : options.url), true);
                 $.each(options.headers,function (key, val) {
                     val = (typeof val === 'function' ? val(file) : val); // resolve value
                     // if resolved value is boolean false, do not send this header

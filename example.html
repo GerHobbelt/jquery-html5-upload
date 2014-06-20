@@ -7,7 +7,7 @@
 
         <style>
             #drop_area.file_hover {
-                background:red;
+                background: red;
             }
 
         </style>
@@ -23,33 +23,36 @@
             </div>
         </div>
         <script type="text/javascript">
-            $(function() {
+            $(function () {
                 var $input = $("#upload_field").html5_upload({
-                    url: function(number) {
-                        return prompt(number + " url", "/");
+                    url: function (number, file, files) {
+                        return prompt(number + " url (filename: " + this.get_file_name(file) + " @ " + Math.ceil(this.get_file_size(file) / 1E3) + "Kb)", "/");
                     },
                     sendBoundary: window.FormData || $.browser.mozilla,
-                    onStart: function(event, total) {
+                    onStart: function (event, total) {
                         return true;
                         return confirm("You are trying to upload " + total + " files. Are you sure?");
                     },
-                    onProgress: function(event, progress, name, number, total) {
+                    onProgress: function (event, progress, name, number, total) {
                         console.log(progress, number);
                     },
-                    setName: function(text) {
+                    setName: function (text) {
                         $("#progress_report_name").text(text);
                     },
-                    setStatus: function(text) {
+                    setStatus: function (text) {
                         $("#progress_report_status").text(text);
                     },
-                    setProgress: function(val) {
+                    setProgress: function (val) {
                         $("#progress_report_bar").css('width', Math.ceil(val*100)+"%");
                     },
-                    onFinishOne: function(event, response, name, number, total) {
+                    onFinishOne: function (event, response, name, number, total) {
                         //alert(response);
                     },
-                    onError: function(event, name, error) {
+                    onError: function (event, name, error) {
                         alert('error while uploading file ' + name);
+                    },
+                    onAbort: function (event, name, error) {
+                        alert('file ' + name + ' upload has been aborted');
                     }
                 });
 
@@ -61,13 +64,13 @@
                 $.event.props.push('dataTransfer');
 
                 var $drop = $('#drop_area');
-                $drop.on( 'dragover dragenter', function(e){ 
+                $drop.on( 'dragover dragenter', function (e){ 
                     $drop.addClass('file_hover'); 
                     return false;
-                }).on( 'dragleave dragexit', function(e){ 
+                }).on( 'dragleave dragexit', function (e){ 
                     $drop.removeClass('file_hover');
                     return false;
-                }).on( 'drop', function(e){            
+                }).on( 'drop', function (e){            
                     if(e.originalEvent.dataTransfer && e.originalEvent.dataTransfer.files.length) {
                         $input.trigger('html5_upload.startFromDrop', e );
                     }
